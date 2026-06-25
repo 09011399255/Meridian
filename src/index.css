@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+
+@font-face {
+  font-family: 'SFT Schrifted Sans TRIAL';
+  src: url('/fonts/SFTSchriftedSansTRIAL-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: #000000;
+    background-image: url('/images/BG.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: #ffffff;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+    overflow-x: hidden;
+    margin: 0;
+    padding: 0;
+  }
+}
+
+.meridian-gradient-text {
+  background:
+    radial-gradient(circle at bottom right, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) bottom right / 50% 50% no-repeat,
+    radial-gradient(circle at bottom left, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) bottom left / 50% 50% no-repeat,
+    radial-gradient(circle at top left, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) top left / 50% 50% no-repeat,
+    radial-gradient(circle at top right, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) top right / 50% 50% no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% 200%;
+  /* The slow breathing drift — pure CSS animation, NOT Framer Motion, running independently */
+  animation: gradient-drift 14s ease-in-out infinite alternate;
+  /* Performance hints to keep this smooth and isolated from the parent's transform animation */
+  will-change: background-position;
+  display: inline-block;
+}
+
+@keyframes gradient-drift {
+  0% {
+    background-position: 100% 100%, 0% 100%, 0% 0%, 100% 0%;
+  }
+  100% {
+    background-position: 90% 90%, 10% 90%, 10% 10%, 90% 10%;
+  }
+}
+
+.meridian-wordmark {
+  font-family: "SFT Schrifted Sans TRIAL", "Inter", system-ui, sans-serif;
+  font-weight: 500;
+}
+
+.meridian-headline-gradient {
+  font-family: "Plus Jakarta Sans", "Inter", sans-serif;
+  font-weight: 700;
+}
+
