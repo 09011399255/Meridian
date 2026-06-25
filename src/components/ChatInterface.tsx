@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { api, setToken, isLoggedIn } from '../api'
+import { api, isLoggedIn } from '../api'
 
 interface Message {
   id: string
@@ -149,7 +149,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
   const inputAudioCtxRef = useRef<AudioContext | null>(null)
   const outputAudioCtxRef = useRef<AudioContext | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
-  const speakingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const speakingTimeoutRef = useRef<any | null>(null)
 
   // Audio processing helpers
   const convertFloat32ToInt16 = (buffer: Float32Array) => {
@@ -386,12 +386,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           setChatMode('general');
           // Load general conversation history
           const history = await api.conversation.getHistory();
-          const mappedMessages = history.map((m: any) => ({
+          const mappedMessages: Message[] = history.map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
-            sender: m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user',
+            sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
             timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
-            structuredData: m.structuredData || m.structured_data || null
+            structuredData: m.structuredData || m.structured_data || undefined
           }));
           
           if (mappedMessages.length === 0) {
@@ -420,9 +420,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           setChatMode('onboarding');
           // Load onboarding history
           const onboardingHistory = await api.onboarding.getHistory();
-          const mappedMessages = onboardingHistory.map((m: any) => ({
+           const mappedMessages: Message[] = onboardingHistory.map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
-            sender: m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user',
+            sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
             timestamp: m.timestamp ? new Date(m.timestamp) : new Date()
           }));
@@ -506,9 +506,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
 
       // Load general conversation
       const history = await api.conversation.getHistory();
-      const mapped = history.map((m: any) => ({
+      const mapped: Message[] = history.map((m: any) => ({
         id: m.id || `msg-${Math.random()}`,
-        sender: m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user',
+        sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
         text: m.text || m.content || '',
         timestamp: m.timestamp ? new Date(m.timestamp) : new Date()
       }));
