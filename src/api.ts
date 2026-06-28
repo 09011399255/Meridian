@@ -35,9 +35,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     let errorMessage = 'An error occurred';
+    let errData: any = null;
     try {
-      const errData = await response.json();
-      errorMessage = errData.error || errData.message || errorMessage;
+      errData = await response.json();
+      console.log(`[API RESPONSE ERROR DATA]`, errData);
+      errorMessage = errData.message || (typeof errData.error === 'string' ? errData.error : '') || errorMessage;
     } catch {
       errorMessage = response.statusText || errorMessage;
     }
@@ -49,7 +51,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     return {} as T;
   }
 
-  return response.json();
+  const responseData = await response.json();
+  console.log(`[API RESPONSE DATA]`, responseData);
+  return responseData;
 }
 
 // API methods
@@ -67,7 +71,7 @@ export const api = {
     getStatus: () => request<{ completed: boolean }>('/api/onboarding/status'),
     getMessage: (body: { message: string }) => request<{ response: string }>('/api/onboarding/message', { method: 'POST', body: JSON.stringify(body) }),
     complete: () => request<any>('/api/onboarding/complete', { method: 'POST' }),
-    getHistory: () => request<any[]>('/api/onboarding/history'),
+    getHistory: () => request<{ success: boolean; messages: any[] }>('/api/onboarding/history'),
   },
   profile: {
     get: () => request<any>('/api/profile'),
@@ -87,14 +91,14 @@ export const api = {
   checkin: {
     start: () => request<any>('/api/checkin/start', { method: 'POST' }),
     message: (body: { message: string }) => request<{ response: string }>('/api/checkin/message', { method: 'POST', body: JSON.stringify(body) }),
-    getHistory: () => request<any[]>('/api/checkin/history'),
+    getHistory: () => request<{ success: boolean; checkins: any[] }>('/api/checkin/history'),
   },
   conversation: {
     message: (body: { message: string }) => request<{ response: string }>('/api/conversation/message', { method: 'POST', body: JSON.stringify(body) }),
-    getHistory: () => request<any[]>('/api/conversation/history'),
+    getHistory: () => request<{ success: boolean; messages: any[] }>('/api/conversation/history'),
   },
   voice: {
-    startSession: () => request<{ sessionId: string }>('/api/voice/session/start', { method: 'POST' }),
-    endSession: (sessionId: string) => request<any>(`/api/voice/session/${sessionId}/end`, { method: 'POST' }),
+    startSession: (body?: { conversationId?: string }) => request<{ sessionId: string }>('/api/voice/session/start', { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+    endSession: (sessionId: string) => request<{ success: boolean; transcript?: Array<{ sender: string; text: string; timestamp?: string }> }>(`/api/voice/session/${sessionId}/end`, { method: 'POST' }),
   }
 };

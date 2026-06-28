@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { AuthLayout } from './AuthLayout'
 import { api, setToken } from '../api'
@@ -23,6 +23,10 @@ export const Login: React.FC<LoginProps> = ({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const displayNameRef = useRef<HTMLInputElement>(null)
+  const emailRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+
   // Sync state if prop changes
   useEffect(() => {
     setMode(initialMode)
@@ -41,22 +45,27 @@ export const Login: React.FC<LoginProps> = ({
     e.preventDefault()
     setError('')
 
-    if (mode === 'signup' && !displayName.trim()) {
+    // Fallback to reading DOM values directly in case browser autofill bypassed React's onChange state updates
+    const currentDisplayName = displayNameRef.current?.value || displayName
+    const currentEmail = emailRef.current?.value || email
+    const currentPassword = passwordRef.current?.value || password
+
+    if (mode === 'signup' && !currentDisplayName.trim()) {
       setError('Name is required')
       return
     }
 
-    if (!email.trim()) {
+    if (!currentEmail.trim()) {
       setError('Email is required')
       return
     }
 
-    if (!validateEmail(email)) {
+    if (!validateEmail(currentEmail)) {
       setError('Please enter a valid email address')
       return
     }
 
-    if (!password.trim() || password.length < 6) {
+    if (!currentPassword.trim() || currentPassword.length < 6) {
       setError('Password must be at least 6 characters')
       return
     }
@@ -65,18 +74,18 @@ export const Login: React.FC<LoginProps> = ({
     try {
       if (mode === 'signup') {
         const response = await api.auth.register({
-          email,
-          password,
-          display_name: displayName
+          email: currentEmail,
+          password: currentPassword,
+          display_name: currentDisplayName
         });
-        setToken(response.token);
+        setToken(response.token || response.session?.access_token);
         onLoginSuccess?.();
       } else {
         const response = await api.auth.login({
-          email,
-          password
+          email: currentEmail,
+          password: currentPassword
         });
-        setToken(response.token);
+        setToken(response.token || response.session?.access_token);
         onLoginSuccess?.();
       }
     } catch (err: any) {
@@ -136,9 +145,11 @@ export const Login: React.FC<LoginProps> = ({
           {/* Display Name Input (Only on Signup) */}
           {mode === 'signup' && (
             <input
+              ref={displayNameRef}
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
+              onInput={(e) => setDisplayName(e.currentTarget.value)}
               placeholder="Your name"
               disabled={isLoading}
               className="w-full bg-[#1A1A1A] hover:bg-[#202020] focus:bg-[#202020] text-white border border-transparent rounded-full px-6 py-4 font-sans text-[15px] focus:outline-none placeholder-white/30 transition-all duration-200"
@@ -147,9 +158,11 @@ export const Login: React.FC<LoginProps> = ({
 
           {/* Email Input */}
           <input
+            ref={emailRef}
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onInput={(e) => setEmail(e.currentTarget.value)}
             placeholder="Enter your email"
             disabled={isLoading}
             className="w-full bg-[#1A1A1A] hover:bg-[#202020] focus:bg-[#202020] text-white border border-transparent rounded-full px-6 py-4 font-sans text-[15px] focus:outline-none placeholder-white/30 transition-all duration-200"
@@ -157,9 +170,11 @@ export const Login: React.FC<LoginProps> = ({
 
           {/* Password Input */}
           <input
+            ref={passwordRef}
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onInput={(e) => setPassword(e.currentTarget.value)}
             placeholder={mode === 'signup' ? "Create a password" : "Password"}
             disabled={isLoading}
             className="w-full bg-[#1A1A1A] hover:bg-[#202020] focus:bg-[#202020] text-white border border-transparent rounded-full px-6 py-4 font-sans text-[15px] focus:outline-none placeholder-white/30 transition-all duration-200"

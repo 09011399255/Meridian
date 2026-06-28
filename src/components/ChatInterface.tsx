@@ -7,6 +7,7 @@ interface Message {
   sender: 'user' | 'meridian'
   text: string
   timestamp: Date
+  channel?: 'text' | 'voice'
   structuredData?: {
     type: 'direction' | 'roadmap'
     title?: string
@@ -220,7 +221,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
     setTranscriptionText('Connecting...');
     
     try {
-      const { sessionId } = await api.voice.startSession();
+      const { sessionId } = await api.voice.startSession({ conversationId: activeConversationId || undefined });
       setCurrentSessionId(sessionId);
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -229,7 +230,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       const baseWsUrl = (import.meta.env.VITE_API_BASE_URL || 'https://meridian-api-production-ce31.up.railway.app')
         .replace(/\/$/, '')
         .replace(/^http/, 'ws');
-      const wsUrl = `${baseWsUrl}/api/voice/session/${sessionId}`;
+      
+      const token = sessionStorage.getItem('meridian_token') || '';
+      let wsUrl = `${baseWsUrl}/api/voice/session/${sessionId}`;
+      if (token) {
+        wsUrl += `?token=${encodeURIComponent(token)}`;
+      }
       
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -344,7 +350,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
     }
     if (currentSessionId) {
       try {
-        await api.voice.endSession(currentSessionId);
+        const res = await api.voice.endSession(currentSessionId);
+        if (res && res.transcript && res.transcript.length > 0) {
+          setConversations(prev => prev.map(c => {
+            if (c.id === activeConversationId) {
+              const existingMessageIds = new Set(c.messages.map(m => m.text + m.sender));
+              const newMessages = [...c.messages];
+              
+              res.transcript?.forEach((t: any) => {
+                const sender = (t.sender === 'user' ? 'user' : 'meridian');
+                const key = (t.text || t.content || '') + sender;
+                if (!existingMessageIds.has(key)) {
+                  newMessages.push({
+                    id: t.id || `voice-${Date.now()}-${Math.random()}`,
+                    sender,
+                    text: t.text || t.content || '',
+                    timestamp: t.timestamp ? new Date(t.timestamp) : new Date(),
+                    channel: 'voice'
+                  });
+                  existingMessageIds.add(key);
+                }
+              });
+
+              return {
+                ...c,
+                messages: newMessages,
+                preview: newMessages[newMessages.length - 1]?.text || c.preview,
+                lastActive: new Date()
+              };
+            }
+            return c;
+          }));
+        }
       } catch (err) {
         console.error('Failed to end voice session:', err);
       }
@@ -379,14 +416,26 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
     
     const initData = async () => {
       try {
-        const statusRes = await api.onboarding.getStatus();
+        let statusRes: any;
+        try {
+          statusRes = await api.onboarding.getStatus();
+        } catch (err: any) {
+          // TEMP: mitigates a possible backend trigger race condition, real fix needed on backend
+          if (err.message && (err.message.includes('User record not found') || err.message.includes('USER_NOT_FOUND') || err.message === 'true')) {
+            console.log('[INIT DATA] USER_NOT_FOUND detected. Retrying in 1.5 seconds to mitigate backend trigger race...');
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            statusRes = await api.onboarding.getStatus();
+          } else {
+            throw err;
+          }
+        }
         setIsOnboardingCompleted(statusRes.completed);
         
         if (statusRes.completed) {
           setChatMode('general');
           // Load general conversation history
-          const history = await api.conversation.getHistory();
-          const mappedMessages: Message[] = history.map((m: any) => ({
+          const historyRes = await api.conversation.getHistory();
+          const mappedMessages: Message[] = (historyRes.messages || []).map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
             sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
@@ -419,8 +468,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
         } else {
           setChatMode('onboarding');
           // Load onboarding history
-          const onboardingHistory = await api.onboarding.getHistory();
-           const mappedMessages: Message[] = onboardingHistory.map((m: any) => ({
+          const onboardingHistoryRes = await api.onboarding.getHistory();
+          const mappedMessages: Message[] = (onboardingHistoryRes.messages || []).map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
             sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
@@ -505,8 +554,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       }
 
       // Load general conversation
-      const history = await api.conversation.getHistory();
-      const mapped: Message[] = history.map((m: any) => ({
+      const historyRes = await api.conversation.getHistory();
+      const mapped: Message[] = (historyRes.messages || []).map((m: any) => ({
         id: m.id || `msg-${Math.random()}`,
         sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
         text: m.text || m.content || '',
@@ -630,15 +679,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
 
     try {
       let response: any;
-      if (!isOnboardingCompleted) {
-        // Onboarding mode
-        response = await api.onboarding.getMessage({ message: textVal });
-      } else if (chatMode === 'checkin') {
-        // Check-in mode
-        response = await api.checkin.message({ message: textVal });
-      } else {
-        // General conversation mode
-        response = await api.conversation.message({ message: textVal });
+      const getResponse = async () => {
+        if (!isOnboardingCompleted) {
+          // Onboarding mode
+          return await api.onboarding.getMessage({ message: textVal });
+        } else if (chatMode === 'checkin') {
+          // Check-in mode
+          return await api.checkin.message({ message: textVal });
+        } else {
+          // General conversation mode
+          return await api.conversation.message({ message: textVal });
+        }
+      };
+
+      try {
+        response = await getResponse();
+      } catch (err: any) {
+        // TEMP: mitigates a possible backend trigger race condition, real fix needed on backend
+        if (err.message && (err.message.includes('User record not found') || err.message.includes('USER_NOT_FOUND') || err.message === 'true')) {
+          console.log('[CHAT MESSAGE] USER_NOT_FOUND detected. Retrying in 1.5 seconds to mitigate backend trigger race...');
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          response = await getResponse();
+        } else {
+          throw err;
+        }
       }
 
       // Check if response has structured data
@@ -756,6 +820,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       {/* SIDEBAR (Responsive drawer on mobile, persistent on desktop) */}
       {!isVoiceMode ? (
         <motion.aside
+          key="normal-sidebar"
           initial={false}
           animate={{ 
             x: isMobile ? (isSidebarOpen ? 0 : '-100%') : 0,
@@ -941,6 +1006,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       ) : (
         /* Collapsed Icon Rail (far left) while in Voice Mode */
         <motion.aside
+          key="collapsed-sidebar"
           initial={{ width: 0, opacity: 0 }}
           animate={{ width: isMobile ? 0 : 72, opacity: isMobile ? 0 : 1 }}
           transition={{ duration: 0.3 }}
@@ -1219,9 +1285,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                                     initial={{ opacity: 0, y: 8 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ duration: 0.3 }}
-                                    className="bg-[#1A1A1A] text-white px-5 py-3.5 rounded-2xl rounded-tr-sm max-w-[85%] sm:max-w-[70%] text-[14.5px] leading-[1.5] shadow-md border border-white/5 font-medium"
+                                    className="bg-[#1A1A1A] text-white px-5 py-3.5 rounded-2xl rounded-tr-sm max-w-[85%] sm:max-w-[70%] text-[14.5px] leading-[1.5] shadow-md border border-white/5 font-medium relative group"
                                   >
                                     {msg.text}
+                                    {msg.channel === 'voice' && (
+                                      <div className="flex items-center gap-1 mt-1.5 text-[10px] text-white/40 justify-end">
+                                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                        </svg>
+                                        <span>Voice turn</span>
+                                      </div>
+                                    )}
                                   </motion.div>
                                 ) : (
                                   <motion.div
@@ -1230,8 +1304,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                                     transition={{ duration: 0.4, delay: 0.1 }}
                                     className="w-full text-left"
                                   >
-                                    <div className="text-[#F7F7F7] text-[15px] sm:text-[16px] leading-[1.6] max-w-[88%] font-medium whitespace-pre-wrap">
+                                    <div className="text-[#F7F7F7] text-[15px] sm:text-[16px] leading-[1.6] max-w-[88%] font-medium whitespace-pre-wrap relative group">
                                       {msg.text}
+                                      {msg.channel === 'voice' && (
+                                        <div className="flex items-center gap-1 mt-1.5 text-[10px] text-white/40">
+                                          <svg className="w-3 h-3 text-[#FF51CB]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                          </svg>
+                                          <span>Spoken response</span>
+                                        </div>
+                                      )}
                                     </div>
 
                                     {msg.structuredData && (
@@ -1414,13 +1496,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                     }`}
                   >
                     <form onSubmit={handleSend} className="w-full relative">
-                      <div className="w-full bg-[#151515] border border-white/5 focus-within:border-white/10 rounded-full flex items-center px-4 py-[18px] transition-all shadow-xl">
+                      <div className="w-full bg-[#151515] border border-white/5 focus-within:border-white/10 rounded-full flex items-center px-3 py-2.5 sm:px-4 sm:py-[14px] transition-all shadow-xl">
                         
                         {/* Add/Attachment File button */}
                         <button
                           type="button"
                           onClick={() => console.log('TEMP: file attach')}
-                          className="w-11 h-11 rounded-full flex items-center justify-center hover:bg-white/5 text-white/50 hover:text-white transition-all active:scale-90 shrink-0"
+                          className="rounded-full flex items-center justify-center hover:bg-white/5 text-white/50 hover:text-white transition-all active:scale-90 shrink-0"
+                          style={{ width: 'clamp(2.25rem, 5.5vw, 2.75rem)', height: 'clamp(2.25rem, 5.5vw, 2.75rem)' }}
                         >
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -1432,15 +1515,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                           value={inputValue}
                           onChange={(e) => setInputValue(e.target.value)}
                           placeholder="Tell me about your work..."
-                          className="flex-1 bg-transparent border-none text-white focus:outline-none text-[15px] px-4 placeholder-white/20 font-medium"
+                          className="flex-1 bg-transparent border-none text-white focus:outline-none text-[15px] px-2 sm:px-4 placeholder-white/20 font-medium min-w-0"
                         />
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                           {/* Voice Mode Trigger */}
                           <button
                             type="button"
                             onClick={startVoiceSession}
-                            className="w-11 h-11 rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/5 transition-all active:scale-90"
+                            className="rounded-full flex items-center justify-center text-white/50 hover:text-white hover:bg-white/5 transition-all active:scale-90 shrink-0"
+                            style={{ width: 'clamp(2.25rem, 5.5vw, 2.75rem)', height: 'clamp(2.25rem, 5.5vw, 2.75rem)' }}
                             title="Voice Mode"
                           >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -1452,11 +1536,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                           <button
                             type="submit"
                             disabled={!inputValue.trim()}
-                            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all ${
+                            className={`rounded-full flex items-center justify-center transition-all shrink-0 ${
                               inputValue.trim() 
                                 ? 'bg-white text-black hover:bg-[#F7F7F7] active:scale-90 shadow-sm' 
                                 : 'bg-white/10 text-white/20 cursor-not-allowed'
                             }`}
+                            style={{ width: 'clamp(2.25rem, 5.5vw, 2.75rem)', height: 'clamp(2.25rem, 5.5vw, 2.75rem)' }}
                           >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />

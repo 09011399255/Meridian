@@ -64,3 +64,13 @@
   font-weight: 700;
 }
 
+/* Custom Webkit Autofill Styling Override */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #FFFFFF;
+  -webkit-box-shadow: 0 0 0px 1000px #1A1A1A inset; /* match the input's existing dark background color */
+  caret-color: #FFFFFF;
+  transition: background-color 5000s ease-in-out 0s; /* prevents the yellow flash on autofill */
+}
+
