@@ -824,9 +824,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           initial={false}
           animate={{ 
             x: isMobile ? (isSidebarOpen ? 0 : '-100%') : 0,
+            width: '270px',
             transition: { type: 'spring', damping: 25, stiffness: 200 }
           }}
-          className={`fixed top-0 bottom-0 left-0 z-50 w-[270px] bg-[#0A0A0A] border-r border-white/5 flex flex-col justify-between pt-4 pb-5 md:pt-6 md:pb-6 md:static md:flex`}
+          className={`fixed top-0 bottom-0 left-0 z-50 w-[270px] bg-[#0A0A0A] border-r border-white/5 flex flex-col justify-between pt-4 pb-5 md:pt-6 md:pb-6 md:static md:flex shrink-0`}
         >
           {/* Sidebar Header & Brand */}
           <div className="px-5 mb-5 flex items-center justify-between">
@@ -1005,7 +1006,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
         </motion.aside>
       ) : (
         /* Collapsed Icon Rail (far left) while in Voice Mode */
-        <motion.aside
+        <motion.div
           key="collapsed-sidebar"
           initial={{ width: 0, opacity: 0 }}
           animate={{ width: isMobile ? 0 : 72, opacity: isMobile ? 0 : 1 }}
@@ -1090,7 +1091,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#E71800] to-[#FF51CB] flex items-center justify-center text-white font-bold text-[13px] shadow-sm uppercase select-none">
             {userName.charAt(0)}
           </div>
-        </motion.aside>
+        </motion.div>
       )}
 
       {/* MAIN VIEW CONTENT CONTAINER */}
