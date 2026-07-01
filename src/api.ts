@@ -83,7 +83,8 @@ export const api = {
     getById: (id: string) => request<any>(`/api/directions/${id}`),
   },
   path: {
-    generate: () => request<any>('/api/path/generate', { method: 'POST' }),
+    generate: (body?: { directionId: string; title?: string }) => 
+      request<any>('/api/path/generate', { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
     get: () => request<any>('/api/path'),
     updateMilestone: (index: number, completed: boolean) => 
       request<any>(`/api/path/milestone/${index}`, { method: 'PUT', body: JSON.stringify({ completed }) }),

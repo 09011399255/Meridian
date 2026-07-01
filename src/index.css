@@ -14,11 +14,10 @@
 
 @layer base {
   body {
-    background-color: #000000;
-    background-image: url('/images/BG.png');
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
+    background-color: #030303;
+    background-image: 
+      radial-gradient(at top center, rgba(120, 119, 198, 0.08) 0%, transparent 60%),
+      radial-gradient(at 0% 0%, rgba(255, 81, 203, 0.02) 0%, transparent 40%);
     background-attachment: fixed;
     color: #ffffff;
     font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
@@ -29,19 +28,10 @@
 }
 
 .meridian-gradient-text {
-  background:
-    radial-gradient(circle at bottom right, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) bottom right / 50% 50% no-repeat,
-    radial-gradient(circle at bottom left, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) bottom left / 50% 50% no-repeat,
-    radial-gradient(circle at top left, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) top left / 50% 50% no-repeat,
-    radial-gradient(circle at top right, #E71800 0%, #FF51CB 25%, #F7F7F7 50%) top right / 50% 50% no-repeat;
+  background: linear-gradient(135deg, #ffffff 40%, #a1a1aa 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-size: 200% 200%;
-  /* The slow breathing drift — pure CSS animation, NOT Framer Motion, running independently */
-  animation: gradient-drift 14s ease-in-out infinite alternate;
-  /* Performance hints to keep this smooth and isolated from the parent's transform animation */
-  will-change: background-position;
   display: inline-block;
 }
 

@@ -31,6 +31,63 @@ interface ChatInterfaceProps {
   onLogout: () => void
 }
 
+const fallbackDirections = [
+  {
+    id: "dir-1",
+    title: "Design Systems Engineer",
+    description: "Bridges the gap between design tokens and production code, crafting reusable design patterns, fluid layouts, and interactive components.",
+    why_now: "The rise of design-tokens (Figma Variables) and container queries has created a high-demand niche for developers who speak design fluently.",
+    leveraged_skills: ["React", "UI Engineering", "Framer Motion", "Tailwind CSS"],
+    evidence: {
+      stats: [
+        { value: "+42%", label: "listings with token reqs" },
+        { value: "$140k", label: "median base UI salary" }
+      ],
+      points: [
+        "Major enterprise companies (Figma, Vercel, Stripe) are expanding dedicated Design Systems departments.",
+        "Reduction in design-to-code handoff friction is a top priority for engineering orgs in 2026."
+      ]
+    },
+    chosen: false
+  },
+  {
+    id: "dir-2",
+    title: "Creative Technologist",
+    description: "Focuses on high-end visual polish, interactive micro-experiments, shaders, and premium marketing/product storytelling.",
+    why_now: "WebGL, 3D on the web (Spline/Three.js), and generative UI are reshaping how luxury and high-growth brands engage customers.",
+    leveraged_skills: ["WebGL", "Three.js", "Math-driven layout", "Creative coding"],
+    evidence: {
+      stats: [
+        { value: "3x", label: "higher engagement rates" },
+        { value: "Top 10%", label: "salary tier in creative agencies" }
+      ],
+      points: [
+        "A growing transition of native apps to premium, highly interactive web-based storytelling experiences.",
+        "Strong market signals from branding agencies targeting next-gen immersive product landing pages."
+      ]
+    },
+    chosen: false
+  },
+  {
+    id: "dir-3",
+    title: "Frontend Architect (AI Interfaces)",
+    description: "Specializes in building complex state machines, live voice streaming integrations, and low-latency generative UI wrappers.",
+    why_now: "The explosion of AI agents requires frontend developers skilled in streaming, WebSockets, and complex client-side state orchestration.",
+    leveraged_skills: ["React hooks", "WebSockets", "State management", "Audio Processing"],
+    evidence: {
+      stats: [
+        { value: "+240%", label: "growth in AI product roles" },
+        { value: "$165k", label: "average compensation" }
+      ],
+      points: [
+        "Shift from chat-only text bubbles to rich visual canvas layouts and direct streaming audio interfaces.",
+        "Massive venture backing for companies building the next layer of human-AI interface systems."
+      ]
+    },
+    chosen: false
+  }
+];
+
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
   const [conversations, setConversations] = useState<Conversation[]>([
     {
@@ -142,8 +199,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
   const [profileData, setProfileData] = useState<any>(null)
   const [pathData, setPathData] = useState<any>(null)
   const [directionsData, setDirectionsData] = useState<any>(null)
-  const [isGeneratingPath, setIsGeneratingPath] = useState(false)
+  const [isGeneratingPath] = useState(false)
   const [isGeneratingDirections, setIsGeneratingDirections] = useState(false)
+  
+  // Directions Screen selection states
+  const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null)
+  const [isConfirmingSelection, setIsConfirmingSelection] = useState(false)
+  const [, setConfirmingStepText] = useState('Locking in your direction...')
+  const [chosenDirectionTitle, setChosenDirectionTitle] = useState('')
+  const [showChangeTrackConfirm, setShowChangeTrackConfirm] = useState(false)
+  const [completedMilestones, setCompletedMilestones] = useState<Record<number, boolean>>({})
 
   // WebSocket and Audio refs
   const wsRef = useRef<WebSocket | null>(null)
@@ -248,26 +313,62 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
 
       let nextPlaybackTime = 0;
 
-      ws.onopen = () => {
+      ws.onopen = async () => {
+        console.log('[Voice Mode] WebSocket connection opened successfully.');
         setTranscriptionText('Listening...');
+        
+        // Ensure AudioContexts are resumed (browsers often suspend them by default)
+        try {
+          if (inputCtx.state === 'suspended') {
+            await inputCtx.resume();
+            console.log('[Voice Mode] Input AudioContext resumed.');
+          }
+          if (outputCtx.state === 'suspended') {
+            await outputCtx.resume();
+            console.log('[Voice Mode] Output AudioContext resumed.');
+          }
+        } catch (e) {
+          console.warn('[Voice Mode] Failed to resume AudioContexts:', e);
+        }
+
         const source = inputCtx.createMediaStreamSource(stream);
         const processor = inputCtx.createScriptProcessor(4096, 1, 1);
         source.connect(processor);
         processor.connect(inputCtx.destination);
         
+        let audioChunkCount = 0;
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           const inputData = e.inputBuffer.getChannelData(0);
+          
+          // Calculate volume level (RMS) to diagnose mute/permission/mic hardware issues
+          let sum = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sum += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sum / inputData.length);
+          
+          audioChunkCount++;
+          if (audioChunkCount % 30 === 0) {
+            console.log(`[Voice Mode] Sent ${audioChunkCount} chunks. Current volume (RMS): ${rms.toFixed(5)}, Context state: ${inputCtx.state}`);
+          }
+          
           const int16Buffer = convertFloat32ToInt16(inputData);
           const base64 = arrayBufferToBase64(int16Buffer);
           ws.send(JSON.stringify({ type: 'audio', audio: base64 }));
         };
       };
 
+      let receiveChunkCount = 0;
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'audio' && data.audio) {
+            receiveChunkCount++;
+            if (receiveChunkCount % 30 === 0) {
+              console.log(`[Voice Mode] Received ${receiveChunkCount} audio chunks from server.`);
+            }
+            
             const arrayBuf = base64ToArrayBuffer(data.audio);
             const float32 = convertInt16ToFloat32(arrayBuf);
             
@@ -299,6 +400,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
             }, (nextPlaybackTime - outputCtx.currentTime) * 1000);
             
           } else if (data.type === 'transcription') {
+            console.log(`[Voice Mode] Received transcription:`, data);
             setTranscriptionText(data.text);
             if (data.sender === 'user') {
               appendVoiceMessage('user', data.text);
@@ -307,16 +409,22 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
             }
           }
         } catch (err) {
-          console.error('Error in voice WebSocket onmessage:', err);
+          console.error('[Voice Mode] Error in WebSocket onmessage:', err);
         }
       };
 
       ws.onerror = (err) => {
-        console.error('Voice WS error:', err);
+        console.error('[Voice Mode] WebSocket error:', err);
+        setTranscriptionText('Error: Voice connection lost');
+        setVoiceState('idle');
       };
 
-      ws.onclose = () => {
-        console.log('Voice WS connection closed');
+      ws.onclose = (event) => {
+        console.log(`[Voice Mode] WebSocket closed. Code: ${event.code}, Reason: ${event.reason || 'None'}`);
+        setVoiceState('idle');
+        if (event.code !== 1000 && event.code !== 1005) {
+          setTranscriptionText(`Connection closed: ${event.reason || 'Code ' + event.code}`);
+        }
       };
 
     } catch (err: any) {
@@ -437,9 +545,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           const historyRes = await api.conversation.getHistory();
           const mappedMessages: Message[] = (historyRes.messages || []).map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
-            sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
+            sender: (m.sender === 'assistant' || m.sender === 'meridian' || m.role === 'assistant' || m.role === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
-            timestamp: m.timestamp ? new Date(m.timestamp) : new Date(),
+            timestamp: m.timestamp || m.created_at ? new Date(m.timestamp || m.created_at) : new Date(),
             structuredData: m.structuredData || m.structured_data || undefined
           }));
           
@@ -471,9 +579,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
           const onboardingHistoryRes = await api.onboarding.getHistory();
           const mappedMessages: Message[] = (onboardingHistoryRes.messages || []).map((m: any) => ({
             id: m.id || `msg-${Math.random()}`,
-            sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
+            sender: (m.sender === 'assistant' || m.sender === 'meridian' || m.role === 'assistant' || m.role === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
             text: m.text || m.content || '',
-            timestamp: m.timestamp ? new Date(m.timestamp) : new Date()
+            timestamp: m.timestamp || m.created_at ? new Date(m.timestamp || m.created_at) : new Date()
           }));
           
           if (mappedMessages.length === 0) {
@@ -513,12 +621,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       }
       
       const pathRes = await api.path.get();
-      setPathData(pathRes.path || pathRes);
+      const currentPath = pathRes.path || pathRes;
+      setPathData(currentPath);
+      if (currentPath && (currentPath.title || currentPath.directionTitle)) {
+        setChosenDirectionTitle(currentPath.title || currentPath.directionTitle);
+      }
 
       const dirs = await api.directions.get();
       setDirectionsData(dirs);
     } catch (err) {
       console.error('Error loading sub-views data:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (pathData) {
+      const initialCompleted: Record<number, boolean> = {};
+      const stepsList = pathData.steps || pathData.milestones || [];
+      stepsList.forEach((step: any, idx: number) => {
+        initialCompleted[idx] = step.completed || false;
+      });
+      setCompletedMilestones(initialCompleted);
+    }
+  }, [pathData]);
+
+  const handleToggleMilestone = async (idx: number) => {
+    const currentVal = !!completedMilestones[idx];
+    const newVal = !currentVal;
+    setCompletedMilestones(prev => ({ ...prev, [idx]: newVal }));
+    try {
+      await api.path.updateMilestone(idx, newVal);
+    } catch (err) {
+      console.error('Failed to update milestone status on backend:', err);
     }
   };
 
@@ -532,7 +666,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       const prof = completeRes.profile || (await api.profile.get());
       setProfileData(prof);
       
-      // Auto-trigger generations
+      // Auto-trigger directions generation
       setIsGeneratingDirections(true);
       try {
         const genDirs = await api.directions.generate();
@@ -543,23 +677,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
         setIsGeneratingDirections(false);
       }
 
-      setIsGeneratingPath(true);
-      try {
-        const genPath = await api.path.generate();
-        setPathData(genPath);
-      } catch (err) {
-        console.error('Failed to generate path:', err);
-      } finally {
-        setIsGeneratingPath(false);
-      }
+      // Do NOT auto-generate path here. The user must choose a direction first!
+      setPathData(null);
+      setChosenDirectionTitle('');
+      setActiveTab('path');
 
       // Load general conversation
       const historyRes = await api.conversation.getHistory();
       const mapped: Message[] = (historyRes.messages || []).map((m: any) => ({
         id: m.id || `msg-${Math.random()}`,
-        sender: (m.sender === 'assistant' || m.sender === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
+        sender: (m.sender === 'assistant' || m.sender === 'meridian' || m.role === 'assistant' || m.role === 'meridian' ? 'meridian' : 'user') as 'user' | 'meridian',
         text: m.text || m.content || '',
-        timestamp: m.timestamp ? new Date(m.timestamp) : new Date()
+        timestamp: m.timestamp || m.created_at ? new Date(m.timestamp || m.created_at) : new Date()
       }));
 
       if (mapped.length === 0) {
@@ -589,6 +718,88 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
     }
   };
 
+  const handleSelectDirection = async (direction: any) => {
+    setSelectedDirectionId(direction.id || direction.title);
+    setChosenDirectionTitle(direction.title || '');
+    setIsConfirmingSelection(true);
+    setConfirmingStepText('Locking in your direction...');
+    
+    // Cycle loading texts in the UI for premium choreography
+    const cyclingTexts = [
+      'Locking in your direction...',
+      'Mapping your career path...',
+      'Orchestrating milestones...',
+      'Finalizing blueprint...'
+    ];
+    
+    let textIdx = 0;
+    const intervalId = setInterval(() => {
+      textIdx++;
+      if (textIdx < cyclingTexts.length) {
+        setConfirmingStepText(cyclingTexts[textIdx]);
+      }
+    }, 1000);
+    
+    try {
+      // Call generate path on backend
+      const genPath = await api.path.generate({ 
+        directionId: direction.id || '',
+        title: direction.title || ''
+      });
+      
+      // Enforce a minimum animation duration of 4 seconds so the transition is premium and readable
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      
+      setPathData(genPath.path || genPath);
+      
+      // Update directions list to set chosen status locally
+      try {
+        const freshDirs = await api.directions.get();
+        setDirectionsData(freshDirs);
+      } catch {
+        // Fallback update chosen state in current list
+        if (Array.isArray(directionsData)) {
+          setDirectionsData((prevDirs: any[]) => 
+            prevDirs.map((d: any) => ({
+              ...d,
+              chosen: (d.id === direction.id || d.title === direction.title)
+            }))
+          );
+        }
+      }
+      
+    } catch (err) {
+      console.error('Error selecting direction and generating path:', err);
+      // Fallback: update path data using mock data on error so it works in client
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      
+      // Use the chosen direction to build a realistic path
+      const fallbackPath = {
+        title: direction.title,
+        description: direction.description,
+        steps: direction.steps || [
+          `Phase 1: Bridge Core Competencies - Establish consistent standards and master target technologies: ${direction.leveraged_skills?.slice(0, 2).join(', ') || 'UI Architecture'}.`,
+          `Phase 2: Project Architecture - Build 3 premium visual experiments demonstrating extreme control over typography and layout.`,
+          `Phase 3: Network & Outreach - Target high-growth startups and creative boutiques seeking developers specialized in this domain.`
+        ]
+      };
+      setPathData(fallbackPath);
+      
+      // Update local directions chosen boolean
+      setDirectionsData((prevDirs: any[] | null) => {
+        const dirsList = Array.isArray(prevDirs) ? prevDirs : fallbackDirections;
+        return dirsList.map((d: any) => ({
+          ...d,
+          chosen: (d.id === direction.id || d.title === direction.title)
+        }));
+      });
+    } finally {
+      clearInterval(intervalId);
+      setIsConfirmingSelection(false);
+      setSelectedDirectionId(null);
+    }
+  };
+
   // Check active tab transitions
   useEffect(() => {
     if (!isLoggedIn()) return;
@@ -598,7 +809,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
       }).catch(err => console.error('Error fetching profile:', err));
     } else if (activeTab === 'path') {
       api.path.get().then(res => {
-        setPathData(res.path || res);
+        const currentPath = res.path || res;
+        setPathData(currentPath);
+        if (currentPath && (currentPath.title || currentPath.directionTitle)) {
+          setChosenDirectionTitle(currentPath.title || currentPath.directionTitle);
+        }
       }).catch(err => console.error('Error fetching path:', err));
       api.directions.get().then(res => {
         setDirectionsData(res);
@@ -1144,69 +1359,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
                       repeat: Infinity,
                       ease: "easeInOut"
                     }}
-                    className="absolute w-52 h-52 md:w-60 md:h-60 rounded-full bg-gradient-to-tr from-[#E71800] via-[#FF51CB] to-[#F7F7F7] opacity-25 filter blur-3xl"
+                    className="absolute w-80 h-80 md:w-96 md:h-96 rounded-full bg-gradient-to-tr from-[#E71800] via-[#FF51CB] to-[#F7F7F7] opacity-25 filter blur-3xl z-10 pointer-events-none"
                   />
 
-                  {/* The actual Orb */}
-                  <motion.div
+                  {/* The actual Orb Asset */}
+                  <motion.img
+                    src="/images/Orb.svg"
+                    alt="Meridian Orb"
                     animate={{
-                      scale: voiceState === 'speaking' ? [1, 1.08, 0.96, 1.04, 1] : [1, 1.03, 1],
+                      scale: voiceState === 'speaking' ? [1, 1.06, 1] : [1, 1.03, 1],
                     }}
                     transition={{
-                      duration: voiceState === 'speaking' ? 2.5 : 5,
+                      duration: voiceState === 'speaking' ? 1.5 : 3.0,
                       repeat: Infinity,
                       ease: "easeInOut"
                     }}
-                    className="w-40 h-40 md:w-48 md:h-48 rounded-full relative overflow-hidden bg-[#0A0A0A] border border-white/10 flex items-center justify-center shadow-2xl"
-                  >
-                    {/* Layer 1: Red Blob */}
-                    <motion.div
-                      animate={{
-                        x: voiceState === 'speaking' ? [-15, 20, -10, 15, -15] : [-10, 10, -10],
-                        y: voiceState === 'speaking' ? [-10, 15, -15, 10, -10] : [-5, 5, -5],
-                        scale: voiceState === 'speaking' ? [1, 1.25, 0.85, 1.1, 1] : [1, 1.08, 1],
-                      }}
-                      transition={{
-                        duration: voiceState === 'speaking' ? 3.5 : 7,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                      className="absolute w-32 h-32 md:w-36 md:h-36 rounded-full bg-[#E71800] opacity-60 mix-blend-screen filter blur-xl -left-6 -top-6"
-                    />
-
-                    {/* Layer 2: Pink Blob */}
-                    <motion.div
-                      animate={{
-                        x: voiceState === 'speaking' ? [20, -15, 15, -10, 20] : [10, -10, 10],
-                        y: voiceState === 'speaking' ? [15, -10, 10, -15, 15] : [5, -5, 5],
-                        scale: voiceState === 'speaking' ? [0.9, 1.2, 0.9, 1.15, 0.9] : [0.95, 1.05, 0.95],
-                      }}
-                      transition={{
-                        duration: voiceState === 'speaking' ? 4 : 8,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                      className="absolute w-32 h-32 md:w-36 md:h-36 rounded-full bg-[#FF51CB] opacity-65 mix-blend-screen filter blur-xl -right-6 -bottom-6"
-                    />
-
-                    {/* Layer 3: White Blob */}
-                    <motion.div
-                      animate={{
-                        x: voiceState === 'speaking' ? [-5, 10, -8, 5, -5] : [-3, 3, -3],
-                        y: voiceState === 'speaking' ? [10, -5, 8, -10, 10] : [3, -3, 3],
-                        scale: voiceState === 'speaking' ? [0.8, 1.1, 0.85, 1.05, 0.8] : [0.9, 1.0, 0.9],
-                      }}
-                      transition={{
-                        duration: voiceState === 'speaking' ? 3 : 6,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                      className="absolute w-24 h-24 md:w-28 md:h-28 rounded-full bg-[#F7F7F7] opacity-45 mix-blend-screen filter blur-lg left-8 top-8"
-                    />
-
-                    {/* Layer 4: Ambient Core Center */}
-                    <div className="absolute inset-2 rounded-full bg-gradient-to-tr from-transparent via-[#FF51CB]/10 to-[#F7F7F7]/5 filter blur-sm pointer-events-none" />
-                  </motion.div>
+                    className="w-64 h-64 md:w-80 md:h-80 object-contain z-20 relative select-none"
+                  />
 
                 </div>
 
@@ -1716,89 +1885,440 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="flex-1 overflow-y-auto px-4 md:px-8 py-8"
+              className="flex-1 overflow-y-auto px-4 md:px-8 py-8 relative"
             >
+              {/* Premium Background Ambient Glow */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-[800px] h-[350px] bg-gradient-to-b from-[#FF51CB]/5 via-transparent to-transparent pointer-events-none blur-3xl rounded-full -z-10" />
+
               <div className="max-w-[800px] mx-auto w-full space-y-8 select-none">
                 
-                {/* Header Lockup */}
-                <div className="border-b border-white/10 pb-6">
-                  <span className="text-[11px] font-bold text-blue-400 uppercase tracking-widest">
-                    Directions & Blueprint
-                  </span>
-                  <h2 className="text-[28px] sm:text-[34px] font-sans font-bold text-white tracking-tight mt-1">
-                    Your Roadmaps
-                  </h2>
-                  <p className="text-white/40 text-[14px] font-medium mt-1">
-                    {directionsData || pathData ? "Your step-by-step career transition path." : "// TEMP: build Path/Directions view. Below are your activated career direction tracks."}
-                  </p>
-                </div>
-
+                {/* State Loading / Generating */}
                 {(isGeneratingDirections || isGeneratingPath) && (
                   <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-8 flex flex-col items-center justify-center text-center space-y-4">
-                    <div className="w-10 h-10 rounded-full border-t-2 border-b-2 border-blue-400 animate-spin" />
-                    <h3 className="text-white font-bold text-[16px]">Generating Strategy Blueprint</h3>
-                    <p className="text-white/40 text-[12px] max-w-[320px]">
+                    <div className="w-10 h-10 rounded-full border-t-2 border-b-2 border-[#FF51CB] animate-spin" />
+                    <h3 className="text-white font-bold text-[16px] font-sans">Generating Career Directions</h3>
+                    <p className="text-white/40 text-[12px] max-w-[320px] font-sans">
                       Analyzing your strengths and engineering profile to curate custom transition paths...
                     </p>
                   </div>
                 )}
 
-                {/* Primary Direction Track */}
-                {!isGeneratingDirections && !isGeneratingPath && (
-                  <div className="bg-[#0A0A0A] border border-white/5 rounded-2xl p-6 relative overflow-hidden">
-                    <div className="absolute top-0 bottom-0 right-0 w-[30%] bg-gradient-to-l from-[#FF51CB]/5 to-transparent pointer-events-none" />
-                    
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="bg-[#FF51CB]/10 border border-[#FF51CB]/20 px-2 py-0.5 rounded text-[#FF51CB] font-bold text-[10px] uppercase">
-                            Primary Direction
-                          </span>
-                          <span className="text-white/30 text-[11px]">
-                            Activated June 2026
-                          </span>
-                        </div>
-                        <h3 className="text-white font-bold text-[20px] mt-2">
-                          {directionsData?.title || (Array.isArray(directionsData) && directionsData[0]?.title) || pathData?.title || 'Design Systems Architect'}
-                        </h3>
-                        <p className="text-white/60 text-[13px] mt-1 leading-[1.4]">
-                          {directionsData?.description || (Array.isArray(directionsData) && directionsData[0]?.description) || pathData?.description || 'Focuses on bridging production development speed with design precision by orchestrating tokens, tools, and visual frameworks.'}
-                        </p>
-                      </div>
-                      <div className="bg-white text-black px-4 py-2 rounded-full font-bold text-[12px] shadow-md self-start">
-                        {directionsData?.compatibility || (Array.isArray(directionsData) && directionsData[0]?.compatibility) || '96% Compatibility'}
-                      </div>
+                {/* State A: Selection Mode (No active path generated) */}
+                {!isGeneratingDirections && !isGeneratingPath && !pathData && (
+                  <>
+                    {/* Header section */}
+                    <div className="pb-8 flex flex-col gap-2">
+                      <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block font-sans">
+                        BASED ON YOUR BACKGROUND
+                      </span>
+                      <h2 className="text-[28px] sm:text-[34px] md:text-[40px] font-sans font-bold text-white tracking-tight leading-[1.15]" style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)' }}>
+                        Here's where your skills are valuable <span className="meridian-gradient-text">right now</span>.
+                      </h2>
+                      <p className="text-zinc-500 text-[14px] font-medium font-sans">
+                        Pick one. Meridian builds your exact path to get there.
+                      </p>
                     </div>
 
-                    {/* Horizontal node path */}
-                    <div className="relative border-t border-white/10 pt-6 mt-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                        {(pathData?.steps || pathData?.milestones || (Array.isArray(directionsData) && directionsData[0]?.steps) || [
-                          { title: 'Bridge Token Systems', desc: 'Establish consistent naming conventions and tool bridges (Figma to JSON variables).' },
-                          { title: 'Advanced Fluid Layouts', desc: 'Integrate standard animations, container queries, and responsive viewport logic.' },
-                          { title: 'Target Design Teams', desc: 'Target product companies expanding design system divisions or premium visual studios.' }
-                        ]).map((step: any, idx: number) => {
-                          const stepTitle = typeof step === 'string' ? step.split(':')[0] : (step.title || `Phase ${idx + 1}`);
-                          const stepDesc = typeof step === 'string' ? step.split(':').slice(1).join(':').trim() : (step.desc || step.description || '');
-                          const colors = ['bg-[#E71800]', 'bg-[#FF51CB]', 'bg-blue-500'];
-                          return (
-                            <div key={idx} className="space-y-1.5">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-5 h-5 rounded-full ${colors[idx % 3]} text-black font-bold text-[10px] flex items-center justify-center`}>
-                                  {idx + 1}
-                                </span>
-                                <h4 className="text-white font-bold text-[13px]">
-                                  {stepTitle}
-                                </h4>
+                    {/* Confirmation Takeover / Loading Animation */}
+                    {isConfirmingSelection ? (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="py-12 flex flex-col items-center justify-center text-center space-y-8"
+                      >
+                        <div className="relative flex items-center justify-center">
+                          {/* Outer glow */}
+                          <motion.div
+                            animate={{
+                              scale: [1, 1.2, 1],
+                              opacity: [0.2, 0.4, 0.2],
+                            }}
+                            transition={{
+                              duration: 3,
+                              repeat: Infinity,
+                              ease: "easeInOut"
+                            }}
+                            className="absolute w-60 h-60 rounded-full bg-gradient-to-tr from-indigo-500/10 via-purple-500/10 to-white/10 filter blur-3xl z-10 pointer-events-none"
+                          />
+                          
+                          {/* Pulsing Orb SVG */}
+                          <motion.img
+                            src="/images/Orb.svg"
+                            alt="Mapping Path"
+                            animate={{
+                              scale: [1, 1.04, 1],
+                            }}
+                            transition={{
+                              duration: 3,
+                              repeat: Infinity,
+                              ease: "easeInOut"
+                            }}
+                            className="w-48 h-48 object-contain z-20 relative select-none"
+                          />
+                        </div>
+                        
+                        <div className="space-y-2 max-w-[420px] px-4">
+                          <h3 className="text-white font-bold text-[18px] tracking-tight font-sans">Mapping your path...</h3>
+                          <p className="text-zinc-400 text-[13px] font-semibold font-sans">
+                            Calibrating milestones for {chosenDirectionTitle}...
+                          </p>
+                        </div>
+                      </motion.div>
+                    ) : (
+                      /* Redesigned Card layout (featured + supporting) */
+                      (() => {
+                        const directionsList = (Array.isArray(directionsData) && directionsData.length > 0) 
+                          ? directionsData 
+                          : fallbackDirections;
+                        const featuredDirection = directionsList[0];
+                        const supportingDirections = directionsList.slice(1);
+                        const isAnySelected = selectedDirectionId !== null;
+
+                        return (
+                          <div className="flex flex-col lg:flex-row gap-6 w-full items-start">
+                            {/* Left Column - Featured Card */}
+                            {featuredDirection && (
+                              <div className="w-full lg:w-[58%] shrink-0">
+                                <div className="bg-[#0C0C0E] border border-zinc-800/80 rounded-2xl p-6 md:p-8 h-full flex flex-col justify-between relative overflow-hidden group shadow-[0_8px_30px_rgb(0,0,0,0.6)] hover:border-zinc-700 transition-all duration-300">
+                                  {/* Sleek top edge highlight */}
+                                  <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-zinc-800 via-zinc-700 to-zinc-800" />
+                                  
+                                  {/* Best Match Badge top-right */}
+                                  <div className="absolute top-4 right-4 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-full text-zinc-300 font-bold text-[10px] uppercase tracking-wider font-sans select-none flex items-center gap-1.5 shadow-sm">
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    Best match
+                                  </div>
+                                  
+                                  <div>
+                                    <h3 className="text-white font-sans font-bold text-[22px] md:text-[26px] leading-tight mb-4 tracking-tight max-w-[80%]">
+                                      {featuredDirection.title}
+                                    </h3>
+                                    
+                                    {/* Market Signal */}
+                                    {featuredDirection.why_now && (
+                                      <div className="bg-zinc-900/40 border border-zinc-800/60 rounded-xl p-4 flex items-start gap-3 mb-6">
+                                        <svg className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                        </svg>
+                                        <div>
+                                          <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block font-sans">Market Signal</span>
+                                          <p className="text-zinc-300 text-[12px] leading-relaxed mt-0.5 font-sans">{featuredDirection.why_now}</p>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <p className="text-zinc-400 text-[14px] md:text-[14.5px] leading-relaxed mb-6 font-sans">
+                                      {featuredDirection.description}
+                                    </p>
+                                    
+                                    {/* Leveraged Skills */}
+                                    {featuredDirection.leveraged_skills && (
+                                      <div className="mb-6">
+                                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2.5 font-sans">Leveraged Skills</span>
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {featuredDirection.leveraged_skills.map((skill: string, sIdx: number) => (
+                                            <span key={sIdx} className="bg-zinc-900/30 border border-zinc-800 text-zinc-300 rounded-md px-2.5 py-1 text-[11px] font-sans font-medium select-none">
+                                              {skill}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Evidence Stats */}
+                                    {featuredDirection.evidence && (
+                                      <div className="mb-8 border-t border-zinc-900 pt-5">
+                                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-4 font-sans">Market Data</span>
+                                        <div className="grid grid-cols-2 gap-4 mb-4">
+                                          {featuredDirection.evidence.stats?.map((stat: any, stIdx: number) => (
+                                            <div key={stIdx} className="bg-zinc-900/20 border border-zinc-800/40 rounded-xl p-3 flex flex-col">
+                                              <span className="text-white font-bold text-[18px] md:text-[20px] leading-none font-sans">{stat.value}</span>
+                                              <span className="text-zinc-500 text-[9.5px] leading-none mt-1.5 font-sans uppercase tracking-wider">{stat.label}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        {featuredDirection.evidence.points && (
+                                          <ul className="space-y-1.5 text-[11.5px] text-zinc-400 pl-4 list-disc font-sans">
+                                            {featuredDirection.evidence.points.slice(0, 3).map((pt: string, ptIdx: number) => (
+                                              <li key={ptIdx} className="leading-relaxed">{pt}</li>
+                                            ))}
+                                          </ul>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <button
+                                    onClick={() => handleSelectDirection(featuredDirection)}
+                                    disabled={selectedDirectionId !== null}
+                                    className="w-full bg-white hover:bg-zinc-100 disabled:opacity-50 text-black font-semibold text-[13px] py-3 rounded-xl flex items-center justify-center gap-1.5 select-none active:scale-[0.98] transition-all cursor-pointer font-sans shadow-md"
+                                  >
+                                    <span>Choose this direction</span>
+                                    <span className="text-[13px]">→</span>
+                                  </button>
+                                </div>
                               </div>
-                              <p className="text-white/50 text-[12px] leading-[1.4] pl-7">
-                                {stepDesc}
-                              </p>
+                            )}
+
+                            {/* Right Column - Supporting Stack */}
+                            <div className="w-full lg:flex-1 flex flex-col gap-6">
+                              {supportingDirections.map((direction: any) => {
+                                const isSelected = selectedDirectionId === (direction.id || direction.title);
+                                return (
+                                  <motion.div
+                                    key={direction.id || direction.title}
+                                    animate={{
+                                      opacity: isAnySelected ? (isSelected ? 1 : 0.3) : 1,
+                                      scale: isAnySelected ? (isSelected ? 1.01 : 0.99) : 1,
+                                    }}
+                                    transition={{ duration: 0.3 }}
+                                    className={`bg-[#0C0C0E]/60 border ${
+                                      isSelected ? 'border-zinc-700 shadow-md' : 'border-zinc-900'
+                                    } rounded-2xl p-6 flex flex-col justify-between relative overflow-hidden transition-all duration-300 group hover:border-zinc-800`}
+                                  >
+                                    {/* Glowing top line */}
+                                    <div className={`absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r ${
+                                      isSelected ? 'from-zinc-700 to-zinc-600' : 'from-zinc-800 to-transparent opacity-20 group-hover:opacity-100'
+                                    } transition-opacity`} />
+                                    
+                                    <div>
+                                      <h3 className="text-white font-bold text-[18px] sm:text-[20px] leading-tight mb-3 font-sans">
+                                        {direction.title}
+                                      </h3>
+                                      
+                                      {/* Market Signal */}
+                                      {direction.why_now && (
+                                        <div className="bg-zinc-900/30 border border-zinc-800/60 rounded-xl p-3 flex items-start gap-2.5 mb-4">
+                                          <svg className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                          </svg>
+                                          <div>
+                                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block font-sans">Market Signal</span>
+                                            <p className="text-zinc-300 text-[11.5px] leading-relaxed mt-0.5 font-sans">{direction.why_now}</p>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      <p className="text-zinc-400 text-[13px] sm:text-[13.5px] leading-relaxed mb-4 font-sans">
+                                        {direction.description}
+                                      </p>
+                                      
+                                      {/* Leveraged Skills */}
+                                      {direction.leveraged_skills && (
+                                        <div className="mb-4">
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {direction.leveraged_skills.map((skill: string, sIdx: number) => (
+                                              <span key={sIdx} className="bg-zinc-900/20 border border-zinc-800/60 text-zinc-400 rounded-md px-2 py-0.5 text-[10px] font-sans font-medium select-none">
+                                                {skill}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Evidence Stats */}
+                                      {direction.evidence && (
+                                        <div className="mb-5 border-t border-zinc-900 pt-4">
+                                          <div className="grid grid-cols-2 gap-3">
+                                            {direction.evidence.stats?.slice(0, 2).map((stat: any, stIdx: number) => (
+                                              <div key={stIdx} className="flex flex-col">
+                                                <span className="text-white font-bold text-[17px] leading-tight font-sans">{stat.value}</span>
+                                                <span className="text-zinc-500 text-[9px] leading-none mt-1 font-sans uppercase tracking-wider">{stat.label}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      onClick={() => handleSelectDirection(direction)}
+                                      disabled={isAnySelected}
+                                      className="w-full bg-[#111113] hover:bg-[#161619] border border-zinc-800 hover:border-zinc-700 disabled:opacity-50 text-white font-semibold text-[12.5px] py-2.5 rounded-xl flex items-center justify-center gap-1.5 select-none active:scale-[0.98] transition-all cursor-pointer font-sans"
+                                    >
+                                      <span>Choose this direction</span>
+                                      <span className="text-[12px]">→</span>
+                                    </button>
+                                  </motion.div>
+                                );
+                              })}
                             </div>
-                          );
-                        })}
+                          </div>
+                        );
+                      })()
+                    )}
+                  </>
+                )}
+
+                {/* State B: Blueprint View (Path exists) */}
+                {!isGeneratingDirections && !isGeneratingPath && pathData && (
+                  <div className="space-y-8">
+                    
+                    {/* Header Section */}
+                    <div className="pb-6 flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest block font-sans">
+                          YOUR STRATEGY BLUEPRINT
+                        </span>
+                        <h2 className="text-[26px] sm:text-[32px] md:text-[38px] font-sans font-bold text-white tracking-tight leading-tight">
+                          {pathData.title}
+                        </h2>
+                        <p className="text-zinc-500 text-[13.5px] font-medium font-sans">
+                          Your step-by-step transition roadmap, built for your specific background.
+                        </p>
                       </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => setShowChangeTrackConfirm(true)}
+                        className="bg-[#111113] hover:bg-[#161619] border border-zinc-800 text-zinc-300 hover:text-white font-semibold text-[12.5px] px-5 py-2.5 rounded-full select-none active:scale-[0.98] transition-all cursor-pointer font-sans"
+                      >
+                        Change Track
+                      </button>
                     </div>
+
+                    {/* Highlighted Section: First Action */}
+                    {pathData.first_action && (
+                      <div className="bg-[#0C0C0E] border border-indigo-500/20 p-6 rounded-2xl mb-8 relative overflow-hidden group shadow-[0_8px_30px_rgb(0,0,0,0.6)]">
+                        {/* Ambient subtle glow */}
+                        <div className="absolute top-0 right-0 w-[30%] bottom-0 bg-gradient-to-l from-indigo-500/5 to-transparent pointer-events-none" />
+                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest block mb-1.5 font-sans">
+                          START HERE — TODAY'S ACTION
+                        </span>
+                        <p className="text-zinc-200 text-[15px] sm:text-[16px] leading-relaxed font-sans font-medium">
+                          {pathData.first_action}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Timeline Flow */}
+                    <div className="relative pl-2 pt-2">
+                      <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest block mb-8 font-sans">
+                        ACTION MILESTONES
+                      </span>
+                      
+                      {(() => {
+                        const stepsList = pathData.steps || pathData.milestones || [];
+                        const firstIncompleteIdx = stepsList.findIndex((_item: any, idx: number) => !completedMilestones[idx]);
+
+                        return (
+                          <div className="relative">
+                            {/* Vertical line running down the entire container */}
+                            <div className="absolute left-[13px] top-4 bottom-4 w-[1px] bg-zinc-800" />
+                            
+                            <div className="space-y-0">
+                              {stepsList.map((step: any, idx: number) => {
+                                const stepTitle = typeof step === 'string' ? step.split(':')[0] : (step.title || `Phase ${idx + 1}`);
+                                const stepDesc = typeof step === 'string' ? step.split(':').slice(1).join(':').trim() : (step.desc || step.description || '');
+                                
+                                const isCompleted = !!completedMilestones[idx];
+                                const isActive = idx === firstIncompleteIdx;
+ 
+                                // Node rendering logic
+                                let nodeElement;
+                                if (isCompleted) {
+                                  nodeElement = (
+                                    <button 
+                                      type="button"
+                                      onClick={() => handleToggleMilestone(idx)}
+                                      className="absolute left-1.5 top-1 z-10 w-6 h-6 rounded-full bg-white border border-white flex items-center justify-center text-black transition-all active:scale-90 cursor-pointer shadow-md"
+                                    >
+                                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                        <polyline points="20 6 9 17 4 12" />
+                                      </svg>
+                                    </button>
+                                  );
+                                } else if (isActive) {
+                                  nodeElement = (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleMilestone(idx)}
+                                      className="absolute left-1.5 top-1 z-10 w-6 h-6 rounded-full bg-black border-2 border-indigo-500 flex items-center justify-center transition-all active:scale-90 cursor-pointer shadow-[0_0_12px_rgba(99,102,241,0.2)]"
+                                    >
+                                      <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                                    </button>
+                                  );
+                                } else {
+                                  nodeElement = (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleMilestone(idx)}
+                                      className="absolute left-1.5 top-1 z-10 w-6 h-6 rounded-full bg-black border-2 border-zinc-800 hover:border-zinc-700 flex items-center justify-center transition-all active:scale-90 cursor-pointer"
+                                    />
+                                  );
+                                }
+ 
+                                const contentClass = isCompleted 
+                                  ? "opacity-60" 
+                                  : (isActive ? "opacity-100" : "opacity-40");
+ 
+                                const titleElement = isActive ? (
+                                  <h4 className="font-bold text-[16px] sm:text-[18px] leading-snug font-sans text-white">
+                                    {stepTitle}
+                                  </h4>
+                                ) : (
+                                  <h4 className={`font-bold text-[16px] sm:text-[18px] leading-snug font-sans ${isCompleted ? 'text-zinc-500 line-through' : 'text-zinc-300'}`}>
+                                    {stepTitle}
+                                  </h4>
+                                );
+ 
+                                const descElement = (
+                                  <p className={`text-[13.5px] leading-relaxed mt-1.5 font-sans ${isCompleted ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                                    {stepDesc}
+                                  </p>
+                                );
+ 
+                                return (
+                                  <motion.div 
+                                    key={idx}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: idx * 0.1 }}
+                                    className={`relative pl-12 ${idx === stepsList.length - 1 ? 'pb-0' : 'pb-10'} ${contentClass} group`}
+                                  >
+                                    {nodeElement}
+                                    <div className="flex flex-col items-start">
+                                      {titleElement}
+                                      {descElement}
+                                    </div>
+                                  </motion.div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+ 
+                    {/* What to Ignore Section */}
+                    {(() => {
+                      const rawIgnore = pathData.what_to_ignore || pathData.whatToIgnore;
+                      const whatToIgnoreArray = Array.isArray(rawIgnore) 
+                        ? rawIgnore 
+                        : (typeof rawIgnore === 'string' ? rawIgnore.split(',').map(s => s.trim()) : ["Traditional state containers", "No-code site builders", "Generic styling frameworks"]);
+                      return (
+                        <div className="mt-12 border-t border-zinc-900 pt-8">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block mb-2.5 font-sans">
+                            WHAT TO SKIP
+                          </span>
+                          <p className="text-zinc-500 text-[13px] font-medium mb-4 font-sans">
+                            Meridian specifically identified these as distractions for your situation:
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {whatToIgnoreArray.map((ignoreItem: string, idx: number) => (
+                              <span 
+                                key={idx} 
+                                className="bg-zinc-900/30 border border-zinc-800/80 rounded-full px-4 py-1.5 text-zinc-500 text-[12px] font-medium flex items-center gap-2 select-none line-through font-sans"
+                              >
+                                <span className="text-zinc-600 font-sans">✕</span>
+                                {ignoreItem}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                   </div>
                 )}
 
@@ -1811,6 +2331,56 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onLogout }) => {
   </AnimatePresence>
 
       </main>
+
+      {/* CHANGE TRACK CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {showChangeTrackConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowChangeTrackConfirm(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-sm"
+            />
+
+            {/* Modal Dialog */}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+              className="bg-[#0A0A0A] border border-white/10 rounded-2xl w-full max-w-[400px] shadow-2xl p-6 relative overflow-hidden z-10 flex flex-col gap-4 text-center"
+            >
+              <h3 className="font-sans font-bold text-white text-[18px]">Change Career Track?</h3>
+              <p className="text-white/60 text-[13.5px] leading-relaxed font-sans">
+                Are you sure? This will clear your current path and return you to direction selection.
+              </p>
+              <div className="flex gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangeTrackConfirm(false)}
+                  className="flex-1 bg-white/5 hover:bg-white/10 border border-white/5 text-white/80 py-2.5 rounded-full text-[13px] font-semibold transition-all active:scale-95 cursor-pointer font-sans"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPathData(null);
+                    setChosenDirectionTitle('');
+                    setShowChangeTrackConfirm(false);
+                  }}
+                  className="flex-1 bg-white text-black hover:bg-[#F7F7F7] py-2.5 rounded-full text-[13px] font-semibold transition-all active:scale-95 cursor-pointer font-sans"
+                >
+                  Confirm
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* SETTINGS DIALOG MODAL */}
       <AnimatePresence>
